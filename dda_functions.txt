@@ -1,0 +1,99 @@
+dda_create()
+/*! CREATE a dda given current_position and a target, save to passed location so we can write directly into the queue
+	\param *dda pointer to a dda_queue entry to overwrite
+	\param *target the target position of this move
+
+	\ref startpoint the beginning position of this move
+
+	This function does a /lot/ of math. It works out directions for each axis, distance travelled, the time between the first and second step
+
+	It also pre-fills any data that the selected accleration algorithm needs, and can be pre-computed for the whole move.
+
+	This algorithm is probably the main limiting factor to print speed in terms of firmware limitations
+
+   Regarding lookahead, we can distinguish everything into these cases:
+
+   1. Standard movement. To be joined with the previous move.
+   2. Movement after a pause. This interrupts lookahead, and invalidates
+      prev_dda and prev_distance.
+   3. Non-move, e.g. a wait for temp. This also interrupts lookahead and makes
+      prev_dda and prev_distance invalid. There might be more such cases in the
+      future, e.g. when heater or fan changes are queued up, too.
+   4. Nullmove due to no movement expected, e.g. a pure speed change. This
+      shouldn't interrupt lookahead and be handled af if the change would come
+      with the next movement.
+   5. Nullmove due to movement smaller than a single step. Shouldn't interrupt
+      lookahead either, but this small distance should be added to the next
+      movement.
+   6. Lookahead calculation too slow. This is handled in dda_join_moves()
+      already.
+*/
+
+dda_start()
+/*! Start a prepared DDA
+	\param *dda pointer to entry in dda_queue to start
+
+	This function actually begins the move described by the passed DDA entry.
+
+	We set direction and enable outputs, and set the timer for the first step from the precalculated value.
+
+	We also mark this DDA as running, so other parts of the firmware know that something is happening
+
+	Called both inside and outside of interrupts.
+*/
+
+
+dda_step()
+/**
+  \brief Do per-step movement maintenance.
+
+  \param *dda the current move
+
+  \details Most important task here is to update the Bresenham algorithm and
+  to generate step pulses accordingly, this guarantees geometrical accuracy
+  of the movement. Other tasks, like acceleration calculations, are moved
+  into dda_clock() as much as possible.
+
+  This is called from our timer interrupt every time a step needs to occur.
+  Keep it as simple and fast as possible, this is most critical for the
+  achievable step frequency.
+
+  Note: it was tried to do this in loops instead of straight, repeating code.
+        However, this resulted in at least 16% performance loss, no matter
+        how it was done. On how to measure, see commit "testcases: Add
+        config.h". On the various tries and measurement results, see commits
+        starting with "DDA: Move axis calculations into loops, part 6".
+*/
+
+dda_clock()
+/*! Do regular movement maintenance.
+
+  This should be called pretty often, like once every 1 or 2 milliseconds.
+
+  Currently, this is checking the endstops and doing acceleration maths. These
+  don't need to be checked/recalculated on every single step, so this code
+  can be moved out of the highly time critical dda_step(). At high precision
+  (slow) searches of the endstop, this function is called more often than
+  dda_step() anyways.
+
+  In the future, arc movement calculations might go here, too. Updating
+  movement direction 500 times a second is easily enough for smooth and
+  accurate curves!
+*/
+
+move duration
+    // pre-calculate move speed in millimeter microseconds per step minute for less math in interrupt context
+    // mm (distance) * 60000000 us/min / step (total_steps) = mm.us per step.min
+    //   note: um (distance) * 60000 == mm * 60000000
+    // so in the interrupt we must simply calculate
+    // mm.us per step.min / mm per min (F) = us per step
+
+    // break this calculation up a bit and lose some precision because 300,000um * 60000 is too big for a uint32
+    // calculate this with a uint64 if you need the precision, but it'll take longer so routines with lots of short moves may suffer
+    // 2^32/6000 is about 715mm which should be plenty
+
+    // changed * 10 to * (F_CPU / 100000) so we can work in cpu_ticks rather than microseconds.
+    // timer.c timer_set() routine altered for same reason
+
+    // changed distance * 6000 .. * F_CPU / 100000 to
+    //         distance * 2400 .. * F_CPU / 40000 so we can move a distance of up to 1800mm without overflowing
